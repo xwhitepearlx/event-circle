@@ -13,7 +13,7 @@ const ActivityInfoCard = ({ activity, formatDate }) => {
         <strong>Voting Deadline:</strong>{" "}
         {activity.votingDate
           ? formatDate(activity.votingDate)
-          : "No deadline (auto-finalized)"}
+          : "No deadline"}
       </p>
 
       {/* Finalized badge inside card */}

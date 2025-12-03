@@ -15,17 +15,29 @@ const ActivityItem = ({
     (p) => String(p.user?._id) === String(userId)
   );
 
+  const isParticipating = userEntry && userEntry.status !== "not_participating";
+
   return (
     <div className="col-md-6 mb-4">
       <div className="card shadow-sm h-100">
         <div className="card-body">
           {/* Title + Creator Badge */}
           <h4 className="card-title">
-            {activity.eventTitle}
-
-            {isCreator && (
-              <span className="badge bg-dark text-white ms-2">Creator</span>
-            )}
+            <div className="d-flex justify-content-between align-items-start mb-2">
+              <div>
+                <h4 className="card-title mb-0">
+                  {activity.eventTitle}
+                  {isCreator && (
+                    <span className="badge bg-dark text-white ms-2">
+                      Creator
+                    </span>
+                  )}
+                </h4>
+              </div>
+              {/* User Participation Badge */}
+              {isParticipating && <StatusBadge status={userEntry.status} />}
+            </div>
+            
           </h4>
 
           {/* Event Date */}
@@ -38,7 +50,9 @@ const ActivityItem = ({
             <strong>Voting:</strong>{" "}
             {activity.votingDate
               ? formatDate(activity.votingDate)
-              : "No voting (auto-finalized)"}
+              : activity.isFinalized
+              ? "Finalized"
+              : "No voting deadline"}
           </p>
 
           {/* Status Badges */}
@@ -46,14 +60,15 @@ const ActivityItem = ({
             <span className="badge bg-danger me-2">Cancelled</span>
           )}
 
-          {activity.isFinalized && !activity.isCancelled && (
-            <span className="badge bg-success me-2">Finalized</span>
+          {activity.isCompleted && (
+            <span className="badge bg-info me-2">Completed</span>
           )}
 
-          {/* User Participation Badge */}
-          {userEntry && userEntry.status !== "not_participating" && (
-            <StatusBadge status={userEntry.status} />
-          )}
+          {activity.isFinalized &&
+            !activity.isCancelled &&
+            !activity.isCompleted && (
+              <span className="badge bg-success me-2">Finalized</span>
+            )}
 
           {/* Buttons */}
           <div className="d-flex justify-content-between align-items-center mt-3">

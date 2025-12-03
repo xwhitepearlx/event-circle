@@ -76,6 +76,11 @@ const activitySchema = new mongoose.Schema(
       default: false,
     },
 
+    isCompleted: {
+      type: Boolean,
+      default: false,
+    },
+
     cancelledAt: {
       type: Date,
       default: null,
@@ -137,24 +142,45 @@ activitySchema.methods.updateStatusByDates = function () {
 
   // Only update if not already cancelled
   if (!this.isCancelled) {
-    // Rule 1 — If no voting date, auto-finalize
-    if (!this.votingDate) {
-      this.isFinalized = true;
+    // Mark as completed if finalized and event has passed
+    if (this.isFinalized && this.eventDate && new Date(this.eventDate) < now) {
+      this.isCompleted = true;
     }
 
-    // Rule 2 — If votingDate < now AND eventDate < now → auto-cancel
+    // Auto-cancel logic
+    if (this.eventDate && new Date(this.eventDate) < now && !this.isFinalized) {
+      this.isCancelled = true;
+      this.isFinalized = false;
+      this.isCompleted = false;
+      this.cancelledAt = now;
+
+      // Change all participants status
+      this.participants = this.participants.map((p) => ({
+        ...p.toObject(),
+        status: "not_participating",
+        availableTimes: [],
+      }));
+    }
+
+    // Also cancel if voting date has passed and event date has passed
     if (this.votingDate && this.eventDate) {
       const votingDate = new Date(this.votingDate);
       const eventDate = new Date(this.eventDate);
 
-      if (now > votingDate && now > eventDate) {
+      if (now > votingDate && now > eventDate && !this.isFinalized) {
         this.isCancelled = true;
         this.isFinalized = false;
+        this.isCompleted = false;
         this.cancelledAt = now;
+
+        this.participants = this.participants.map((p) => ({
+          ...p.toObject(),
+          status: "not_participating",
+          availableTimes: [],
+        }));
       }
     }
   }
 };
-
 
 export const Activity = mongoose.model("Activity", activitySchema);

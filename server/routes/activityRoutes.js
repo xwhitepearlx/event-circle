@@ -46,7 +46,7 @@ router.get("/:id", async (req, res) => {
 ============================================================================ */
 router.post("/", async (req, res) => {
   try {
-    const { createdBy } = req.body;
+    const { createdBy, isFinalized } = req.body;
 
     const newActivity = new Activity({
       ...req.body,
@@ -59,6 +59,17 @@ router.post("/", async (req, res) => {
       ],
     });
 
+    // If finalized, explicitly set votingDate to null to bypass validation
+    if (isFinalized) {
+      newActivity.votingDate = null;
+      newActivity.isFinalized = true;
+    }
+    // If not finalized and votingDate is empty string, set to null
+    else if (req.body.votingDate === "" || req.body.votingDate === undefined) {
+      newActivity.votingDate = null;
+    }
+
+    // Call updateStatusByDates AFTER setting votingDate
     newActivity.updateStatusByDates();
 
     await newActivity.save();
@@ -74,7 +85,7 @@ router.post("/", async (req, res) => {
 });
 
 /* ============================================================================
-   PUT — Update activity (Creator only) - WITHOUT MIDDLEWARE
+   PUT — Update activity (Creator only)
 ============================================================================ */
 router.put("/:id", async (req, res) => {
   const { userId } = req.body;
@@ -92,6 +103,18 @@ router.put("/:id", async (req, res) => {
         .json({ error: "Only the creator can edit the event" });
     }
 
+    // Check if event is completed (finalized AND event date passed)
+    const now = new Date();
+    const eventDate = new Date(activity.eventDate);
+    const isCompleted = activity.isFinalized && eventDate < now;
+
+    // If event is completed, NO editing allowed
+    if (isCompleted) {
+      return res.status(400).json({
+        error: "This event has been completed and cannot be edited.",
+      });
+    }
+
     // Allow to edit description after cancelling
     if (activity.isCancelled) {
       const allowedAfterCancel = ["description", "userId"];
@@ -105,24 +128,10 @@ router.put("/:id", async (req, res) => {
       }
     }
 
-    // Fields that can always be edited
-    const editableFields = [
-      "eventTitle",
-      "description",
-      "votingDate",
-      "eventDate",
-      "location",
-      "cost",
-      "agenda",
-      "contactInfo",
-      "whatToBring",
-      "whatsProvided",
-    ];
-
-    // Fields locked if event is finalized
+    // Fields locked if event is finalized (but not completed)
     const lockedIfFinalized = ["eventDate", "location", "votingDate"];
 
-    // Check locked fields first
+    // Check locked fields if finalized
     if (activity.isFinalized) {
       for (const field of lockedIfFinalized) {
         if (req.body[field] !== undefined) {
@@ -139,9 +148,87 @@ router.put("/:id", async (req, res) => {
       }
     }
 
+    // Validate event date/time if being changed (and allowed)
+    if (req.body.eventDate !== undefined && !activity.isFinalized) {
+      const newEventDate = new Date(req.body.eventDate);
+
+      // Event date cannot be in the past
+      if (newEventDate < now) {
+        return res.status(400).json({
+          error: "Event date/time cannot be in the past.",
+        });
+      }
+
+      // If voting date exists, it must be before event date
+      if (req.body.votingDate !== undefined) {
+        const newVotingDate = new Date(req.body.votingDate);
+        if (newVotingDate > newEventDate) {
+          return res.status(400).json({
+            error: "Voting deadline cannot be after the event date/time.",
+          });
+        }
+      } else if (activity.votingDate) {
+        // Check existing voting date against new event date
+        const existingVotingDate = new Date(activity.votingDate);
+        if (existingVotingDate > newEventDate) {
+          return res.status(400).json({
+            error:
+              "Existing voting deadline would be after the new event date/time.",
+          });
+        }
+      }
+    }
+
+    // Validate voting date/time if being changed (and allowed)
+    if (req.body.votingDate !== undefined && !activity.isFinalized) {
+      if (req.body.votingDate === null || req.body.votingDate === "") {
+        // Allow clearing voting date
+        req.body.votingDate = null;
+      } else {
+        const newVotingDate = new Date(req.body.votingDate);
+
+        // Voting date cannot be in the past
+        if (newVotingDate < now) {
+          return res.status(400).json({
+            error: "Voting deadline cannot be in the past.",
+          });
+        }
+
+        // Voting date must be before event date
+        const eventDate = req.body.eventDate
+          ? new Date(req.body.eventDate)
+          : new Date(activity.eventDate);
+
+        if (newVotingDate > eventDate) {
+          return res.status(400).json({
+            error: "Voting deadline cannot be after the event date/time.",
+          });
+        }
+      }
+    }
+
+    // Fields that can always be edited (depending the status)
+    const editableFields = [
+      "eventTitle",
+      "description",
+      "votingDate", 
+      "eventDate",   
+      "location", 
+      "cost",
+      "agenda",
+      "contactInfo",
+      "whatToBring",
+      "whatsProvided",
+    ];
+
+    // Filter out locked fields if finalized
+    const fieldsToCheck = activity.isFinalized
+      ? editableFields.filter((field) => !lockedIfFinalized.includes(field))
+      : editableFields;
+
     // Update allowed fields
     let hasChanges = false;
-    for (const field of editableFields) {
+    for (const field of fieldsToCheck) {
       if (req.body[field] !== undefined) {
         const newValue = req.body[field];
         const currentValue = activity[field];
@@ -156,7 +243,7 @@ router.put("/:id", async (req, res) => {
           valuesDiffer =
             JSON.stringify(sortedNew) !== JSON.stringify(sortedCurrent);
         }
-        // Special handling for dates
+        // Special handling for dates (allow null)
         else if (field.includes("Date")) {
           const newDate = newValue ? new Date(newValue).toISOString() : null;
           const currentDate = currentValue
@@ -223,7 +310,7 @@ router.delete("/:id", async (req, res) => {
     if (!isOnlyCreator && !isCancelledAndOneWeekPassed) {
       return res.status(400).json({
         error:
-          "You may delete this event only if it has been cancelled for 7+ days OR you are the only participant.",
+          "You may delete this event only if it has been cancelled for 7+ days or you are the only participant.",
       });
     }
 

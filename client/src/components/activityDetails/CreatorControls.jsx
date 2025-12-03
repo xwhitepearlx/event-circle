@@ -1,48 +1,65 @@
-const CreatorControls = ({ activity, onEdit, onFinalize, onCancel, onDelete }) => {
-  if (!activity) return null;
+const CreatorControls = ({
+  activity,
+  onEdit,
+  onFinalize,
+  onCancel,
+  onDelete,
+}) => {
+  const canFinalize =
+    !activity.isFinalized && !activity.isCancelled && !activity.isCompleted;
+
+  const canEdit = !activity.isCancelled && !activity.isCompleted;
+
+  const canCancel = !activity.isCancelled && !activity.isCompleted;
+
+  const canDelete = () => {
+    if (!activity) return false;
+
+    // Check if creator is the only participant
+    const isOnlyCreator =
+      activity.participants.length === 1 &&
+      String(activity.participants[0].user?._id) === String(userId);
+
+    // Check if cancelled for 7+ days
+    const isCancelledAndOneWeekPassed =
+      activity.isCancelled &&
+      activity.cancelledAt &&
+      Date.now() - new Date(activity.cancelledAt).getTime() >=
+        7 * 24 * 60 * 60 * 1000;
+
+    return isOnlyCreator || isCancelledAndOneWeekPassed;
+  };
 
   return (
-    <div className="card p-3 mt-3 mb-4 shadow-sm border-primary">
+    <div className="card p-3 shadow-sm mb-4">
       <h5>Creator Controls</h5>
-
-      <div className="d-flex gap-3 mt-2">
-        {/* Edit Activity Button */}
-        {!activity.isCancelled && (
-          <button className="btn btn-warning" onClick={onEdit}>
-            Edit Activity
+      <div className="d-flex flex-wrap gap-2">
+        {/* Edit Button */}
+        {canEdit && (
+          <button className="btn btn-outline-primary" onClick={onEdit}>
+            Edit Event
           </button>
         )}
 
         {/* Finalize Button */}
-        {!activity.isCancelled &&
-          !activity.isFinalized &&
-          activity.votingDate && (
-            <button className="btn btn-success" onClick={onFinalize}>
-              Finalize Event
-            </button>
-          )}
+        {canFinalize && (
+          <button className="btn btn-success" onClick={onFinalize}>
+            Finalize Event
+          </button>
+        )}
 
         {/* Cancel Button */}
-        {!activity.isCancelled && (
-          <button className="btn btn-outline-danger" onClick={onCancel}>
+        {canCancel && (
+          <button className="btn btn-warning" onClick={onCancel}>
             Cancel Event
           </button>
         )}
 
         {/* Delete Button */}
-        {(activity.isCancelled || activity.participants.length === 1) && (
-          <button className="btn btn-danger" onClick={onDelete}>
-            Delete Activity
+        {canDelete && (
+          <button className="btn btn-outline-danger" onClick={onDelete}>
+            Delete Event
           </button>
-        )}
-
-        {/* Status Indicators */}
-        {activity.isFinalized && !activity.isCancelled && (
-          <span className="badge bg-success align-self-center">Finalized</span>
-        )}
-
-        {activity.isCancelled && (
-          <span className="badge bg-danger align-self-center">Cancelled</span>
         )}
       </div>
     </div>

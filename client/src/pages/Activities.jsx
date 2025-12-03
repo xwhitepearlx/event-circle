@@ -7,13 +7,23 @@ const Activities = () => {
   const [loading, setLoading] = useState(true);
   const userId = localStorage.getItem("userId");
 
-  const formatDate = (dateStr) => {
+  const formatDate = (dateStr, includeTime = true) => {
+    if (!dateStr) return "Not set";
+
     const date = new Date(dateStr);
-    return date.toLocaleDateString("en-US", {
+    const options = {
       year: "numeric",
       month: "long",
       day: "2-digit",
-    });
+    };
+
+    if (includeTime) {
+      options.hour = "2-digit";
+      options.minute = "2-digit";
+      options.hour12 = true;
+    }
+
+    return date.toLocaleDateString("en-US", options);
   };
 
   const loadActivities = async () => {
@@ -64,7 +74,7 @@ const Activities = () => {
 
   return (
     <div className="container mt-4">
-      <h2>Your Activities</h2>
+      <h2>All Activities</h2>
 
       <div className="row mt-3">
         {activities.map((activity) => (

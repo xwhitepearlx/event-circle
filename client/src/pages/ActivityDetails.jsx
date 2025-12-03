@@ -59,13 +59,23 @@ const ActivityDetails = () => {
   if (!activity) return <p>Activity not found.</p>;
 
   // Helpers
-  const formatDate = (dateStr) => {
+  const formatDate = (dateStr, includeTime = true) => {
+    if (!dateStr) return "Not set";
+
     const date = new Date(dateStr);
-    return date.toLocaleDateString("en-US", {
+    const options = {
       year: "numeric",
       month: "long",
       day: "2-digit",
-    });
+    };
+
+    if (includeTime) {
+      options.hour = "2-digit";
+      options.minute = "2-digit";
+      options.hour12 = true;
+    }
+
+    return date.toLocaleDateString("en-US", options);
   };
 
   const isCreator = String(activity.createdBy?._id) === String(userId);
@@ -165,26 +175,29 @@ const ActivityDetails = () => {
       // Create payload with ONLY the fields that user actually edited
       const payload = { userId };
 
-      // Helper function to compare values properly
-      const hasChanged = (newVal, originalVal, isDate = false) => {
-        if (isDate) {
-          const formatDateForCompare = (date) => (date ? formatDate(date) : "");
-          return (
-            formatDateForCompare(newVal) !== formatDateForCompare(originalVal)
-          );
-        }
-        return newVal !== originalVal;
+      // Helper to combine date and time
+      const combineDateTime = (dateStr, timeStr) => {
+        if (!dateStr) return null;
+        return new Date(`${dateStr}T${timeStr || "00:00"}`).toISOString();
       };
 
-      // Handle arrays from comma-separated strings
-      const parseArrayFromString = (str) =>
-        str
-          ?.split(",")
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0) || [];
+      // Helper to extract date from ISO
+      const extractDate = (isoString) => {
+        if (!isoString) return "";
+        return isoString.split("T")[0];
+      };
 
-      const compareArrays = (arr1, arr2) =>
-        JSON.stringify([...arr1].sort()) !== JSON.stringify([...arr2].sort());
+      // Helper to extract time from ISO
+      const extractTime = (isoString) => {
+        if (!isoString) return "18:00";
+        const date = new Date(isoString);
+        const hours = String(date.getHours()).padStart(2, "0");
+        const minutes = String(date.getMinutes()).padStart(2, "0");
+        return `${hours}:${minutes}`;
+      };
+
+      // Get current time for validation
+      const now = new Date();
 
       // Check each field against the original activity
       const fieldsToCheck = [
@@ -208,19 +221,70 @@ const ActivityDetails = () => {
       ];
 
       fieldsToCheck.forEach(({ key, value, original }) => {
-        if (hasChanged(value, original)) {
+        if (value !== original) {
           payload[key] = value;
         }
       });
 
-      // Handle dates
-      if (hasChanged(editForm.eventDate, activity.eventDate, true)) {
-        payload.eventDate = editForm.eventDate;
+      // Handle event datetime
+      const originalEventDate = extractDate(activity.eventDate);
+      const originalEventTime = extractTime(activity.eventDate);
+      const newEventDateTime = combineDateTime(
+        editForm.eventDate,
+        editForm.eventTime
+      );
+
+      if (
+        editForm.eventDate !== originalEventDate ||
+        editForm.eventTime !== originalEventTime
+      ) {
+        // Validate event datetime is not in the past
+        if (new Date(newEventDateTime) < now) {
+          alert("Event date/time cannot be in the past.");
+          return;
+        }
+        payload.eventDate = newEventDateTime;
       }
 
-      if (hasChanged(editForm.votingDate, activity.votingDate, true)) {
-        payload.votingDate =
-          editForm.votingDate === "" ? null : editForm.votingDate;
+      // Handle voting datetime
+      const originalVotingDate = activity.votingDate
+        ? extractDate(activity.votingDate)
+        : "";
+      const originalVotingTime = activity.votingDate
+        ? extractTime(activity.votingDate)
+        : "18:00";
+      let newVotingDateTime = null;
+
+      if (editForm.votingDate || activity.votingDate) {
+        if (
+          editForm.votingDate !== originalVotingDate ||
+          editForm.votingTime !== originalVotingTime
+        ) {
+          if (editForm.votingDate) {
+            newVotingDateTime = combineDateTime(
+              editForm.votingDate,
+              editForm.votingTime
+            );
+
+            // Validate voting datetime is not after event datetime
+            const eventDateTime = newEventDateTime || activity.eventDate;
+            if (new Date(newVotingDateTime) > new Date(eventDateTime)) {
+              alert("Voting deadline cannot be after the event date/time.");
+              return;
+            }
+
+            // Validate voting datetime is not in the past
+            if (new Date(newVotingDateTime) < now) {
+              alert("Voting deadline cannot be in the past.");
+              return;
+            }
+
+            payload.votingDate = newVotingDateTime;
+          } else {
+            // Voting date cleared - set to null
+            payload.votingDate = null;
+          }
+        }
       }
 
       // Handle trimmed location
@@ -231,6 +295,15 @@ const ActivityDetails = () => {
       }
 
       // Handle array fields
+      const parseArrayFromString = (str) =>
+        str
+          ?.split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0) || [];
+
+      const compareArrays = (arr1, arr2) =>
+        JSON.stringify([...arr1].sort()) !== JSON.stringify([...arr2].sort());
+
       const whatToBringArray = parseArrayFromString(editForm.whatToBring);
       const originalWhatToBring = activity.whatToBring || [];
       if (compareArrays(whatToBringArray, originalWhatToBring)) {
@@ -260,13 +333,78 @@ const ActivityDetails = () => {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm("Delete this activity? This cannot be undone.")) return;
+    // First check if deletion is allowed
+    const canDelete = () => {
+      if (!activity) return false;
+
+      // Check if creator is the only participant
+      const isOnlyCreator =
+        activity.participants.length === 1 &&
+        String(activity.participants[0].user?._id) === String(userId);
+
+      // Check if cancelled for 7+ days
+      const isCancelledAndOneWeekPassed =
+        activity.isCancelled &&
+        activity.cancelledAt &&
+        Date.now() - new Date(activity.cancelledAt).getTime() >=
+          7 * 24 * 60 * 60 * 1000;
+
+      return isOnlyCreator || isCancelledAndOneWeekPassed;
+    };
+
+    // Show different confirmation messages based on reason
+    let confirmMessage = "Delete this activity? This cannot be undone.";
+    let deleteReason = "";
+
+    if (
+      activity.participants.length === 1 &&
+      String(activity.participants[0].user?._id) === String(userId)
+    ) {
+      confirmMessage = "You are the only participant. Delete this activity?";
+      deleteReason = "only_participant";
+    } else if (activity.isCancelled && activity.cancelledAt) {
+      const daysSinceCancel = Math.floor(
+        (Date.now() - new Date(activity.cancelledAt).getTime()) /
+          (24 * 60 * 60 * 1000)
+      );
+      confirmMessage = `This event was cancelled ${daysSinceCancel} days ago. Delete permanently?`;
+      deleteReason = "cancelled_week_old";
+    }
+
+    // Frontend check
+    if (!canDelete()) {
+      alert(
+        "You cannot delete this event.\n\n" +
+          "You may delete an event only if:\n" +
+          "• You are the only participant, OR\n" +
+          "• The event has been cancelled for 7+ days\n\n" +
+          `Current status: ${activity.participants.length} participants, ` +
+          `${activity.isCancelled ? `Cancelled` : `Active`}`
+      );
+      return;
+    }
+
+    if (!window.confirm(confirmMessage)) return;
 
     try {
       await deleteActivity(id, userId);
+
+      // Show success message
+      alert("Activity deleted successfully!");
       navigate("/activities");
     } catch (err) {
       console.error("Delete error:", err);
+
+      if (err.response?.status === 400) {
+        // Backend validation failed
+        alert(`Cannot delete: ${err.response.data.error}`);
+      } else if (err.response?.status === 403) {
+        alert("You are not authorized to delete this activity.");
+      } else if (err.response?.status === 404) {
+        alert("Activity not found. It may have already been deleted.");
+      } else {
+        alert("Failed to delete activity. Please try again.");
+      }
     }
   };
 
@@ -320,17 +458,33 @@ const ActivityDetails = () => {
       <ActivityInfoCard activity={activity} formatDate={formatDate} />
 
       {/* CREATOR CONTROLS */}
-      {isCreator && (
+      {isCreator && !activity.isCompleted && (
         <CreatorControls
           activity={activity}
           onEdit={() => {
             setEditMode(true);
+
+            // Helper to extract date part
+            const extractDate = (isoString) => {
+              if (!isoString) return "";
+              return isoString.split("T")[0];
+            };
+
+            // Helper to extract time part
+            const extractTime = (isoString) => {
+              if (!isoString) return "18:00";
+              const date = new Date(isoString);
+              const hours = String(date.getHours()).padStart(2, "0");
+              const minutes = String(date.getMinutes()).padStart(2, "0");
+              return `${hours}:${minutes}`;
+            };
+
             setEditForm({
               eventTitle: activity.eventTitle || "",
-              eventDate: formatDate(activity.eventDate),
-              votingDate: activity.votingDate
-                ? formatDate(activity.votingDate)
-                : "",
+              eventDate: extractDate(activity.eventDate),
+              eventTime: extractTime(activity.eventDate),
+              votingDate: extractDate(activity.votingDate),
+              votingTime: extractTime(activity.votingDate),
               location: activity.location || "",
               cost: activity.cost || "",
               description: activity.description || "",
